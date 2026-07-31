@@ -6,103 +6,27 @@ import { config as configModule, database, logger, changePanel, appdata, setStat
 
 const { Launch } = require('minecraft-java-core')
 const { shell, ipcRenderer } = require('electron')
-const fs = require('fs')
-const path = require('path')
-
-// ===== MINI WRITER NBT (sans dépendance externe) =====
-// prismarine-nbt a été abandonné ici : sa dépendance interne "ajv" utilise
-// eval/new Function pour compiler des schémas, ce qui viole la CSP du
-// renderer Electron (script-src 'self', sans 'unsafe-eval') et provoque un
-// écran blanc au chargement. La structure qu'on écrit (servers.dat) étant
-// très simple, on l'encode ici à la main en NBT big-endian non compressé
-// (format natif attendu par Minecraft pour servers.dat).
-function nbtWriteString(str) {
-    const strBuf = Buffer.from(str, 'utf8')
-    const buf = Buffer.alloc(2 + strBuf.length)
-    buf.writeUInt16BE(strBuf.length, 0)
-    strBuf.copy(buf, 2)
-    return buf
-}
-
-function nbtWriteNamedTag(type, name, payloadBuf) {
-    const nameBuf = Buffer.from(name, 'utf8')
-    const header = Buffer.alloc(3 + nameBuf.length)
-    header.writeUInt8(type, 0)
-    header.writeUInt16BE(nameBuf.length, 1)
-    nameBuf.copy(header, 3)
-    return Buffer.concat([header, payloadBuf])
-}
-
-function buildServersDatBuffer(serverInfo) {
-    const TAG_End = 0
-    const TAG_Byte = 1
-    const TAG_String = 8
-    const TAG_List = 9
-    const TAG_Compound = 10
-
-    // Payload du compound représentant UN serveur (contenu de la liste)
-    const serverCompoundPayload = Buffer.concat([
-        nbtWriteNamedTag(TAG_String, 'name', nbtWriteString(serverInfo.name)),
-        nbtWriteNamedTag(TAG_String, 'ip', nbtWriteString(serverInfo.ip)),
-        nbtWriteNamedTag(TAG_Byte, 'acceptTextures', Buffer.from([1])),
-        Buffer.from([TAG_End])
-    ])
-
-    const countBuf = Buffer.alloc(4)
-    countBuf.writeInt32BE(1, 0) // un seul serveur dans la liste
-
-    const listPayload = Buffer.concat([
-        Buffer.from([TAG_Compound]), // type des éléments de la liste
-        countBuf,
-        serverCompoundPayload
-    ])
-
-    const rootPayload = Buffer.concat([
-        nbtWriteNamedTag(TAG_List, 'servers', listPayload),
-        Buffer.from([TAG_End])
-    ])
-
-    return nbtWriteNamedTag(TAG_Compound, '', rootPayload)
-}
-// ===== FIN mini writer NBT =====
 
 // Descriptions affichées via l'icône "?" pour chaque instance.
 // Les clés doivent correspondre exactement au champ "name" de l'instance.
 const instanceDescriptions = {
     "Event": "Instance dédiée aux événements spéciaux et temporaires.",
-    "Extra": "Instance avec des mods rendant le jeux plus beau et plus gourmant.",
+    "Extra": "Instance avec des fonctionnalités et du contenu supplémentaire.",
     "Opti": "Instance optimisée pour de meilleures performances, idéale pour les configurations modestes."
 }
 
+// Map partagée au niveau module : instanceName -> instance de Launch en cours.
+// Volontairement en dehors de la classe pour que l'état "en cours" reste
+// cohérent même si un nouveau Home() est recréé lors d'un changement de panel
+// (sinon un ancien Home() pouvait garder une Map différente de celui affiché).
 const activeLaunches = new Map();
 
+// Prévient le processus principal (main.js/app.js) de la liste actuelle des
+// instances en cours d'exécution, pour que le popup du tray puisse afficher
+// un badge "En cours" à côté du nom, comme dans le sélecteur d'instance du home.
 function notifyTrayRunning() {
     ipcRenderer.send('update-tray-running', Array.from(activeLaunches.keys()));
 }
-
-// ===== INJECTION AUTO DU SERVEUR PAR DÉFAUT =====
-// Crée servers.dat avec le serveur de l'instance UNIQUEMENT si le fichier
-// n'existe pas encore (donc au tout premier lancement de l'instance chez
-// le joueur). Si servers.dat existe déjà (le joueur a peut-être ajouté ses
-// propres serveurs, ou a déjà notre serveur par défaut), on ne touche à
-// RIEN. servers.dat doit rester dans la liste "ignored" de l'instance
-// (déjà le cas dans instances.php) pour que le système de vérification du
-// launcher ne l'écrase jamais après ce premier lancement.
-async function ensureDefaultServer(gameDir, serverInfo) {
-    const serversPath = path.join(gameDir, 'servers.dat')
-
-    if (fs.existsSync(serversPath)) return
-
-    try {
-        const buffer = buildServersDatBuffer(serverInfo)
-        fs.mkdirSync(gameDir, { recursive: true })
-        fs.writeFileSync(serversPath, buffer)
-        console.log(`servers.dat créé automatiquement pour ${gameDir}`)
-    } catch (err) {
-        console.error('Erreur lors de la création automatique de servers.dat :', err)
-    }
-}
-// ===== FIN injection serveur =====
 
 class Home {
     static id = "home";
@@ -110,12 +34,17 @@ class Home {
     async init(config) {
         this.config = config;
         this.db = new database();
-
+        // instanceName -> instance de Launch en cours (permet le multi-lancement)
+        // Map partagée au niveau module (et non plus par instance de Home)
+        // pour que le badge "En cours" reste cohérent même si un nouveau
+        // Home() est recréé lors d'un changement de panel.
         this.activeLaunches = activeLaunches;
 
         this.news()
         this.socialLick()
         this.instancesSelect()
+        this.reviewBanner()
+        this.partnerBanner()
 
         const db = this.db;
         setInterval(async () => {
@@ -134,10 +63,15 @@ class Home {
 
         document.querySelector('.settings-btn').addEventListener('click', e => changePanel('settings'))
 
+        // Ouvre la page profil du site (Azuriom) où le joueur peut changer
+        // son pseudo, son skin, son mot de passe, etc. — plutôt que les
+        // paramètres du launcher, qui restent accessibles via l'icône ⚙.
         document.querySelector('.player-head').addEventListener('click', () => {
             if (typeof this.config.online === 'string') {
                 shell.openExternal(`${this.config.online}/profile`);
             } else {
+                // Si le launcher n'est pas configuré en mode AZauth (Microsoft/hors-ligne),
+                // il n'y a pas de profil web associé — on retombe sur les paramètres.
                 changePanel('settings');
             }
         });
@@ -153,6 +87,11 @@ class Home {
         })
 
         ipcRenderer.on('tray-logout', async () => {
+            // Déconnecte le compte actuellement sélectionné.
+            // NOTE : adapte cette logique si ta page settings gère la
+            // déconnexion différemment (ex: suppression du compte plutôt
+            // que simple désélection). Ici on se contente de désélectionner
+            // le compte actif et de recharger l'interface.
             let configClient = await this.db.readData('configClient')
             configClient.account_selected = null
             await this.db.updateData('configClient', configClient)
@@ -163,6 +102,10 @@ class Home {
     }
 
     // ===== BANDEAU DE MAINTENANCE (visible pour les comptes whitelistés) =====
+    // Si la maintenance est active côté serveur mais que le compte connecté
+    // fait partie de la whitelist (voir index.js), on arrive quand même sur
+    // le home. Ce bandeau rappelle que la maintenance est en cours pour les
+    // joueurs normaux, avec un compte à rebours en direct jusqu'à la fin.
     async checkMaintenanceBanner() {
         try {
             const res = await configModule.GetConfig();
@@ -180,6 +123,7 @@ class Home {
     }
 
     renderMaintenanceBanner(message, endDateISO) {
+        // Évite les doublons si checkMaintenanceBanner est rappelé
         let existing = document.querySelector('.maintenance-banner');
         if (existing) existing.remove();
 
@@ -297,6 +241,7 @@ class Home {
                     </div>` : ''}
                 </div>`;
 
+            // Relancer l'animation de la barre de progression
             const fillBar = newsContainer.querySelector('.news-progress-fill');
             if (fillBar) {
                 fillBar.style.animation = 'none';
@@ -316,16 +261,19 @@ class Home {
                 });
             }
 
+            // Scroll désactivé pour la navigation des news
         };
 
         render();
 
+        // Auto-slide toutes les 6 secondes avec animation fade
         if (slides.length > 1) {
             let autoSlideTimer = setInterval(() => {
                 const next = (current + 1) % slides.length;
                 const block = newsContainer.querySelector('.news-block');
                 if (!block) return;
 
+                // Animation sortie
                 block.style.transition = 'opacity 0.4s ease, transform 0.4s ease';
                 block.style.opacity = '0';
                 block.style.transform = 'translateX(-20px)';
@@ -334,6 +282,7 @@ class Home {
                     current = next;
                     render();
 
+                    // Animation entrée
                     const newBlock = newsContainer.querySelector('.news-block');
                     if (newBlock) {
                         newBlock.style.opacity = '0';
@@ -350,6 +299,7 @@ class Home {
                 }, 400);
             }, 12000);
 
+            // Reset le timer si l'utilisateur interagit manuellement
             const resetTimer = () => {
                 clearInterval(autoSlideTimer);
                 autoSlideTimer = setInterval(() => {
@@ -393,6 +343,156 @@ class Home {
             })
         });
     }
+
+    // ===== BANDEAU "ÉVALUER LE LAUNCHER" =====
+    // Bandeau visible sur le home, avec un bouton pour fermer définitivement
+    // (état sauvegardé dans configClient, donc ne réapparaît plus une fois fermé).
+    async reviewBanner() {
+        // Petit délai : au moment où Home.init() (donc reviewBanner) tourne,
+        // startLauncher() (dans launcher.js) n'a pas encore forcément fini de
+        // rafraîchir/confirmer account_selected. Sans ce délai, on risque de
+        // vérifier le mauvais compte (ou une valeur pas encore à jour).
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        let configClient = await this.db.readData('configClient');
+
+        const currentAccountId = configClient?.account_selected;
+        const dismissedAccounts = configClient?.launcher_config?.review_dismissed_accounts || [];
+
+        // L'état "fermé" est lié au compte connecté, pas au launcher en
+        // général — si un joueur laisse un avis avec un compte, ça ne doit
+        // pas cacher le bandeau pour un autre compte connecté plus tard.
+        if (currentAccountId && dismissedAccounts.includes(currentAccountId)) return;
+
+        // Si le panel n'est plus dans le DOM (cas improbable) ou si on a
+        // changé de panel entre-temps, on vérifie qu'il existe toujours.
+        const homePanel = document.querySelector('.panel.home');
+        if (!homePanel) return;
+
+        const banner = document.createElement('div');
+        banner.classList.add('review-banner');
+        banner.innerHTML = `
+            <span class="review-banner-icon">⭐</span>
+            <span class="review-banner-text">Vous appréciez le launcher ? Laissez un avis sur le site !</span>
+            <span class="review-banner-btn">Évaluer</span>
+            <span class="review-banner-close">✕</span>
+        `;
+
+        homePanel.appendChild(banner);
+
+        // Alignement dynamique sur le bouton ⚙️ (settings), plutôt qu'une
+        // valeur CSS fixe : la barre du bas est dans un container à largeur
+        // limitée qui se centre en plein écran large, donc un simple
+        // "right: Xpx" fixe par rapport au bord de la fenêtre ne colle plus
+        // au bon endroit selon la taille de la fenêtre.
+        const alignBannerToSettingsBtn = () => {
+            const sidebar = document.querySelector('.sidebar');
+            if (!sidebar) return;
+            const rect = sidebar.getBoundingClientRect();
+            const rightOffset = window.innerWidth - rect.right;
+            banner.style.right = `${rightOffset}px`;
+        };
+
+        alignBannerToSettingsBtn();
+        window.addEventListener('resize', alignBannerToSettingsBtn);
+
+        const dismissForCurrentAccount = async () => {
+            let cfg = await this.db.readData('configClient');
+            const accountId = cfg?.account_selected;
+            if (!accountId) return;
+
+            if (!cfg.launcher_config) cfg.launcher_config = {};
+            if (!cfg.launcher_config.review_dismissed_accounts) cfg.launcher_config.review_dismissed_accounts = [];
+
+            if (!cfg.launcher_config.review_dismissed_accounts.includes(accountId)) {
+                cfg.launcher_config.review_dismissed_accounts.push(accountId);
+            }
+            await this.db.updateData('configClient', cfg);
+        };
+
+        banner.querySelector('.review-banner-btn').addEventListener('click', async () => {
+            shell.openExternal('https://patateland.wstr.fr/review');
+            banner.remove();
+            await dismissForCurrentAccount();
+        });
+
+        banner.querySelector('.review-banner-close').addEventListener('click', async () => {
+            banner.remove();
+            await dismissForCurrentAccount();
+        });
+    }
+    // ===== FIN BANDEAU "ÉVALUER LE LAUNCHER" =====
+
+    // ===== ENCART PARTENARIAT (ex: MineStrator) =====
+    // Carte affichée sous la liste de news, dans .new-tab. Contrairement au
+    // bandeau d'avis, la fermeture n'est PAS définitive et n'est pas liée à
+    // un compte : elle masque juste l'encart pendant PARTNER_HIDE_DURATION,
+    // pour ne pas perdre la visibilité du partenariat pour un simple clic
+    // réflexe sur la croix. Le contenu (partner) est en dur ici : si tu gères
+    // plusieurs partenaires ou veux changer le texte sans repackager le
+    // launcher, tu peux remplacer ce bloc par un fetch vers ta config/API.
+    async partnerBanner() {
+        const PARTNER_HIDE_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 jours
+
+        const partner = {
+            name: 'MineStrator',
+            // Logo MineStrator, déjà présent dans tes assets existants
+            // (espace encodé en %20 pour éviter tout souci de chemin)
+            iconSrc: 'assets/images/svgs/S%20BLANC.svg',
+            title: 'Serveur hébergé avec MineStrator !',
+            text: `MineStrator, c'est l'hébergeur FR ultra fiable pour tes serveurs Minecraft, moddés, plugins, ou même autres jeux !`,
+            code: 'LACRIMO',
+            discount: '-10%',
+            url: 'https://minestrator.com/a/LACRIMO'
+        };
+
+        let configClient = await this.db.readData('configClient');
+        const hiddenUntil = configClient?.launcher_config?.partner_banner_hidden_until;
+
+        if (hiddenUntil) {
+            const hiddenUntilDate = new Date(hiddenUntil);
+            if (!isNaN(hiddenUntilDate.getTime()) && hiddenUntilDate > new Date()) return;
+        }
+
+        const newTab = document.querySelector('.new-tab');
+        if (!newTab) return;
+
+        // Évite les doublons si partnerBanner() est rappelé
+        let existing = document.querySelector('.partner-banner-card');
+        if (existing) existing.remove();
+
+        const card = document.createElement('div');
+        card.classList.add('partner-banner-card');
+        card.innerHTML = `
+            <img class="partner-banner-icon" src="${partner.iconSrc}" alt="${partner.name}">
+            <div class="partner-banner-body">
+                <div class="partner-banner-title">${partner.title}</div>
+                <div class="partner-banner-text">
+                    ${partner.text}
+                    <span class="partner-banner-code-inline">Profite de <b>${partner.discount}</b> avec le code <span class="partner-banner-code">${partner.code}</span></span>
+                </div>
+            </div>
+            <div class="partner-banner-actions">
+                <span class="partner-banner-btn">Découvrir ${partner.name}</span>
+                <span class="partner-banner-close">✕</span>
+            </div>
+        `;
+
+        newTab.appendChild(card);
+
+        card.querySelector('.partner-banner-btn').addEventListener('click', () => {
+            shell.openExternal(partner.url);
+        });
+
+        card.querySelector('.partner-banner-close').addEventListener('click', async () => {
+            card.remove();
+            let cfg = await this.db.readData('configClient');
+            if (!cfg.launcher_config) cfg.launcher_config = {};
+            cfg.launcher_config.partner_banner_hidden_until = new Date(Date.now() + PARTNER_HIDE_DURATION).toISOString();
+            await this.db.updateData('configClient', cfg);
+        });
+    }
+    // ===== FIN ENCART PARTENARIAT =====
 
     async instancesSelect() {
         let configClient = await this.db.readData('configClient')
@@ -451,16 +551,23 @@ class Home {
                 }
         }
 
-
+        // Bouton JOUER - séparé du sélecteur d'instance
+        // On lance toujours l'instance actuellement sélectionnée dans la config.
+        // Comme this.activeLaunches est vérifié dans startGame(), cliquer sur
+        // JOUER pendant qu'une instance tourne déjà lancera une AUTRE instance
+        // (celle sélectionnée à ce moment-là) sans bloquer la première.
         document.querySelector('.play-btn').addEventListener('click', async () => {
             let configClient = await this.db.readData('configClient')
             this.startGame(configClient.instance_select).catch(err => {
-
+                // Filet de sécurité ultime : ne devrait plus jamais se déclencher
+                // (toutes les erreurs sont normalement interceptées dans startGame),
+                // mais évite un blocage silencieux si un cas imprévu survient.
                 console.error('Erreur inattendue au lancement :', err)
                 this.activeLaunches.delete(configClient.instance_select); notifyTrayRunning();
             })
         })
 
+        // Sélecteur d'instance - séparé du bouton JOUER
         document.querySelector('.instance-select').addEventListener('click', async e => {
             let configClient = await this.db.readData('configClient')
             let instanceSelect = configClient.instance_select
@@ -485,6 +592,8 @@ class Home {
                 </div>`
         }
 
+        // "Event" s'affiche toujours en dernier dans le popup, peu importe
+        // l'ordre renvoyé par la config.
         const displayList = [...instancesList].sort((a, b) => {
             const aIsEvent = a.name.trim().toLowerCase() === 'event'
             const bIsEvent = b.name.trim().toLowerCase() === 'event'
@@ -550,6 +659,14 @@ class Home {
         })
             }
 
+    // startGame prend désormais le nom de l'instance à lancer en paramètre.
+    // this.activeLaunches (Map) garde une trace des lancements en cours pour
+    // permettre à plusieurs instances de tourner en parallèle sans se marcher
+    // dessus. Chaque instance a son propre objet Launch() et ses propres
+    // événements identifiés par son nom (utilisé aussi pour la fenêtre de logs).
+    // La progression n'est plus affichée dans l'UI (cartes flottantes) mais
+    // via des notifications natives OS (Windows/Linux/Mac), voir
+    // ipcRenderer.send('game-notification', ...) et app.js.
     async startGame(instanceName) {
         if (this.activeLaunches.has(instanceName)) {
             console.log(`${instanceName} est déjà en cours de lancement ou d'exécution.`)
@@ -559,6 +676,9 @@ class Home {
         let launch = new Launch()
         this.activeLaunches.set(instanceName, launch); notifyTrayRunning();
 
+        // Filet de sécurité : si quoi que ce soit plante pendant la
+        // préparation du lancement (config manquante, instance introuvable,
+        // etc.), on nettoie l'état au lieu de bloquer l'instance pour toujours.
         let configClient, instanceListAll, authenticator, options
         try {
             configClient = await this.db.readData('configClient')
@@ -628,18 +748,6 @@ class Home {
                 }
             }
 
-            // ===== Injection auto du serveur par défaut (1er lancement uniquement) =====
-            // Adapte "instances" ci-dessous si la structure réelle de tes dossiers
-            // d'instance est différente (vérifie dans %AppData%/.patateland/).
-            const gameDir = path.join(opt.path, 'instances', options.name)
-            if (options.status?.ip && options.status?.port) {
-                await ensureDefaultServer(gameDir, {
-                    name: options.status.nameServer,
-                    ip: `${options.status.ip}:${options.status.port}`
-                })
-            }
-            // ===== FIN injection serveur =====
-
             launch.Launch(opt);
         } catch (err) {
             console.error('Erreur lors du lancement :', err)
@@ -703,7 +811,8 @@ class Home {
                 ipcRenderer.send('log-window-open', instanceName, `PatateLand - ${instanceName}`);
                 ipcRenderer.send('log-status', instanceName, 'running');
             }
-
+            // Le jeu a réellement démarré : on prévient une seule fois via
+            // notification native que l'instance est prête.
             if (!readyNotified) {
                 readyNotified = true
                 ipcRenderer.send('game-notification', {

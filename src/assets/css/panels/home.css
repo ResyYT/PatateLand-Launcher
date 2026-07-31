@@ -81,6 +81,17 @@
     flex-direction: column;
 }
 
+/* .news-list passe en flex:1 pour laisser la place à l'encart partenaire
+   ajouté juste en dessous (voir .partner-banner-card plus bas). min-height:0
+   est nécessaire pour que le scroll interne du slider continue de fonctionner
+   correctement dans un conteneur flex. */
+.news-list {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
 .news-list :-webkit-scrollbar { 
     width: 6px;
     padding-right: 10px;
@@ -699,3 +710,177 @@
     opacity: 1 !important;
 }
 /* ===== FIN INSTANCE INFO ICON ===== */
+/* ============================================
+   BANDEAU "ÉVALUER LE LAUNCHER" (home)
+   ============================================ */
+.review-banner {
+    position: fixed;
+    bottom: 130px;
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--background-element);
+    backdrop-filter: blur(var(--blur-strength));
+    -webkit-backdrop-filter: blur(var(--blur-strength));
+    border: 1px solid var(--element-color);
+    color: var(--color);
+    padding: 10px 14px;
+    border-radius: 12px;
+    font-size: 12.5px;
+    box-shadow: 0 6px 20px var(--shadow);
+    max-width: 280px;
+    animation: review-banner-in 0.4s ease;
+}
+
+@keyframes review-banner-in {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.review-banner-icon {
+    font-size: 18px;
+    flex-shrink: 0;
+}
+
+.review-banner-text {
+    flex: 1;
+    line-height: 1.4;
+}
+
+.review-banner-btn {
+    background: var(--element-color);
+    color: white;
+    font-weight: 700;
+    padding: 6px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: filter 0.15s, transform 0.15s;
+}
+
+.review-banner-btn:hover {
+    filter: brightness(1.1);
+    transform: scale(1.03);
+}
+
+.review-banner-close {
+    color: var(--color);
+    opacity: 0.5;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 2px 4px;
+    flex-shrink: 0;
+    transition: opacity 0.15s;
+}
+
+.review-banner-close:hover {
+    opacity: 1;
+}
+
+/* ============================================
+   ENCART PARTENARIAT (ex: MineStrator) — home
+   ============================================ */
+/* Couleurs officielles de la charte MineStrator (indépendantes du thème du
+   launcher, pour rester fidèle à leur image de marque) */
+:root {
+    --minestrator-green: #009B72;
+    --minestrator-orange: #FF715B;
+}
+
+.partner-banner-card {
+    flex-shrink: 0;
+    margin-top: 14px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: var(--background-element);
+    backdrop-filter: blur(var(--blur-strength));
+    -webkit-backdrop-filter: blur(var(--blur-strength));
+    border: 1px solid var(--border-color);
+    border-radius: 15px;
+    padding: 14px 20px;
+    box-shadow: 0 6px 20px var(--shadow);
+    animation: review-banner-in 0.4s ease;
+}
+
+.partner-banner-icon {
+    width: 34px;
+    height: 34px;
+    flex-shrink: 0;
+    object-fit: contain;
+}
+
+.partner-banner-body {
+    flex: 1;
+    min-width: 0;
+}
+
+.partner-banner-title {
+    font-weight: 700;
+    font-size: 0.95rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+    color: var(--minestrator-green);
+}
+
+.partner-banner-text {
+    font-size: 0.8rem;
+    line-height: 1.4;
+    opacity: 0.85;
+}
+
+.partner-banner-code-inline {
+    display: inline-block;
+    margin-top: 4px;
+}
+
+.partner-banner-code {
+    background: var(--minestrator-orange);
+    color: white;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    letter-spacing: 0.5px;
+}
+
+.partner-banner-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+}
+
+.partner-banner-btn {
+    background: var(--minestrator-green);
+    color: white;
+    font-weight: 700;
+    font-size: 0.8rem;
+    white-space: nowrap;
+    padding: 10px 16px;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: transform 0.2s, filter 0.15s;
+}
+
+.partner-banner-btn:hover {
+    transform: scale(1.05);
+    filter: brightness(1.1);
+}
+
+.partner-banner-close {
+    color: var(--color);
+    opacity: 0.5;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 2px 4px;
+    flex-shrink: 0;
+    transition: opacity 0.15s;
+}
+
+.partner-banner-close:hover {
+    opacity: 1;
+}
+/* ===== FIN ENCART PARTENARIAT ===== */
