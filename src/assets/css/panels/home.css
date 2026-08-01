@@ -869,18 +869,4 @@
     transform: scale(1.05);
     filter: brightness(1.1);
 }
-
-.partner-banner-close {
-    color: var(--color);
-    opacity: 0.5;
-    cursor: pointer;
-    font-size: 14px;
-    padding: 2px 4px;
-    flex-shrink: 0;
-    transition: opacity 0.15s;
-}
-
-.partner-banner-close:hover {
-    opacity: 1;
-}
 /* ===== FIN ENCART PARTENARIAT ===== */

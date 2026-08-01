@@ -76,6 +76,7 @@
 
         .status-dot.running { background: var(--online-color, #2ecc71); }
         .status-dot.stopped { background: rgba(255,255,255,0.3); }
+        .status-dot.crashed { background: var(--delete-button-color, #e74c3c); box-shadow: 0 0 6px var(--delete-button-color, #e74c3c); }
 
         .titlebar-controls {
             display: flex;
@@ -240,6 +241,105 @@
             opacity: 0.4;
             flex-shrink: 0;
         }
+
+        /* ===== RAPPORT DE CRASH ===== */
+        .crash-report {
+            margin: 8px 14px;
+            border: 1px solid var(--delete-button-color, #e74c3c);
+            background: var(--delete-button-bg, rgba(231,76,60,0.08));
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        .crash-report-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 12px;
+        }
+
+        .crash-report-icon {
+            font-size: 15px;
+        }
+
+        .crash-report-title {
+            flex: 1;
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--delete-button-color, #e74c3c);
+        }
+
+        .crash-report-toggle {
+            background: transparent;
+            border: 1px solid var(--delete-button-color, #e74c3c);
+            color: var(--delete-button-color, #e74c3c);
+            font-family: inherit;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: 0.15s;
+        }
+
+        .crash-report-toggle:hover {
+            background: var(--delete-button-color, #e74c3c);
+            color: #fff;
+        }
+
+        .crash-report-actions {
+            display: flex;
+            gap: 8px;
+            padding: 0 12px 10px 12px;
+        }
+
+        .crash-report-open, .crash-report-copy {
+            background: rgba(255,255,255,0.08);
+            border: 1px solid var(--border-color);
+            color: #ffffff;
+            opacity: 0.85;
+            font-family: inherit;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: 0.15s;
+        }
+
+        .crash-report-open:hover, .crash-report-copy:hover {
+            opacity: 1;
+            border-color: var(--element-color);
+        }
+
+        .crash-report-open:disabled {
+            opacity: 0.3;
+            cursor: default;
+        }
+
+        .crash-report-body {
+            display: none;
+            max-height: 260px;
+            overflow-y: auto;
+            margin: 0;
+            padding: 12px;
+            font-family: 'Consolas', 'Menlo', 'Courier New', monospace;
+            font-size: 11px;
+            line-height: 1.5;
+            color: #ffffff;
+            opacity: 0.85;
+            white-space: pre-wrap;
+            word-break: break-all;
+            border-top: 1px solid var(--delete-button-color, #e74c3c);
+            background: rgba(0,0,0,0.2);
+            user-select: text;
+            -webkit-user-select: text;
+        }
+
+        .crash-report.open .crash-report-body {
+            display: block;
+        }
+        /* ===== FIN RAPPORT DE CRASH ===== */
     </style>
 </head>
 <body>
@@ -330,6 +430,142 @@ function detectType(text) {
     return 'info';
 }
 
+// ===== PARSING DU RAPPORT DE CRASH =====
+// home.js envoie le rapport de crash via 'log-send' encadré de marqueurs :
+//   ===CRASH_REPORT===
+//   PATH:/chemin/absolu/vers/crash-....txt
+//   <contenu complet du rapport>
+//   ===END_CRASH_REPORT===
+// On bufferise tout le bloc puis on le rend comme un panneau dédié
+// (renderCrashReport) plutôt que comme des lignes de log normales.
+let crashBuffer = null;
+let crashPathBuffer = null;
+
+function processCrashLine(line) {
+    if (crashBuffer === null && line === '===CRASH_REPORT===') {
+        crashBuffer = [];
+        crashPathBuffer = null;
+        return true;
+    }
+    if (crashBuffer !== null) {
+        if (line === '===END_CRASH_REPORT===') {
+            renderCrashReport(crashPathBuffer, crashBuffer.join('\n'));
+            crashBuffer = null;
+            crashPathBuffer = null;
+            return true;
+        }
+        if (crashPathBuffer === null && line.startsWith('PATH:')) {
+            crashPathBuffer = line.slice(5);
+            return true;
+        }
+        crashBuffer.push(line);
+        return true;
+    }
+    return false;
+}
+
+function renderCrashReport(reportPath, content) {
+    lineCount++;
+    document.getElementById('stat-lines').textContent = lineCount;
+    document.getElementById('log-count').textContent = lineCount;
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'crash-report';
+    wrapper.innerHTML = `
+        <div class="crash-report-header">
+            <span class="crash-report-icon">💥</span>
+            <span class="crash-report-title">Le jeu a crashé — rapport disponible</span>
+            <button class="crash-report-toggle">Afficher</button>
+        </div>
+        <div class="crash-report-actions">
+            <button class="crash-report-open"${reportPath ? '' : ' disabled'}>Ouvrir le fichier</button>
+            <button class="crash-report-copy">Copier le rapport</button>
+        </div>
+        <pre class="crash-report-body"></pre>
+    `;
+
+    const body = wrapper.querySelector('.crash-report-body');
+    body.textContent = content;
+
+    const toggleBtn = wrapper.querySelector('.crash-report-toggle');
+    toggleBtn.addEventListener('click', () => {
+        const isOpen = wrapper.classList.toggle('open');
+        toggleBtn.textContent = isOpen ? 'Masquer' : 'Afficher';
+        if (isOpen && autoScroll) consoleEl.scrollTop = consoleEl.scrollHeight;
+    });
+
+    const openBtn = wrapper.querySelector('.crash-report-open');
+    if (reportPath) {
+        openBtn.addEventListener('click', () => {
+            require('electron').shell.openPath(reportPath);
+        });
+    }
+
+    wrapper.querySelector('.crash-report-copy').addEventListener('click', (e) => {
+        navigator.clipboard.writeText(content).then(() => {
+            const btn = e.currentTarget;
+            const original = btn.textContent;
+            btn.textContent = 'Copié !';
+            setTimeout(() => { btn.textContent = original; }, 1500);
+        }).catch(() => {});
+    });
+
+    consoleEl.appendChild(wrapper);
+    if (autoScroll) consoleEl.scrollTop = consoleEl.scrollHeight;
+}
+// ===== FIN PARSING DU RAPPORT DE CRASH =====
+
+// ===== PARSING DES ÉVÉNEMENTS LOG4J XML (ex: Mixin) =====
+// Certains loaders (Forge/Mixin) écrivent des événements log4j au format XML
+// brut sur stdout, étalés sur plusieurs lignes :
+//   <log4j:Event logger="mixin" timestamp="..." level="WARN" thread="main">
+//     <log4j:Message><![CDATA[le vrai message]]></log4j:Message>
+//   </log4j:Event>
+// Sans traitement, chaque ligne de ce bloc devient une entrée séparée dans
+// la console (le "spam" observé). On bufferise tout le bloc jusqu'à sa
+// balise fermante, puis on le transforme en une seule ligne lisible.
+let log4jBuffer = null;
+
+const LOG4J_LEVEL_TYPE = {
+    ERROR: 'error', FATAL: 'error',
+    WARN: 'warn',
+    INFO: 'info', DEBUG: 'info', TRACE: 'info'
+};
+
+function flushLog4jBuffer() {
+    const raw = log4jBuffer;
+    log4jBuffer = null;
+
+    const logger = (raw.match(/logger="([^"]*)"/) || [, '?'])[1];
+    const level = ((raw.match(/level="([^"]*)"/) || [, 'INFO'])[1]).toUpperCase();
+    const thread = (raw.match(/thread="([^"]*)"/) || [, ''])[1];
+    const cdataMatch = raw.match(/<log4j:Message>\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*<\/log4j:Message>/);
+    const message = cdataMatch ? cdataMatch[1].trim() : raw.replace(/<[^>]+>/g, ' ').trim();
+
+    return {
+        text: `[${thread}/${level}]${logger && logger !== '?' ? ` [${logger}]` : ''}: ${message}`,
+        type: LOG4J_LEVEL_TYPE[level] || 'info'
+    };
+}
+
+// Renvoie { text, type } prêt pour addLog(), ou null si la ligne fait partie
+// d'un bloc log4j encore en cours de bufferisation (rien à afficher pour
+// l'instant, on attend la balise fermante).
+function processIncomingLine(line) {
+    if (processCrashLine(line)) return null;
+
+    if (log4jBuffer === null && line.includes('<log4j:Event')) {
+        log4jBuffer = line;
+        return line.includes('</log4j:Event>') ? flushLog4jBuffer() : null;
+    }
+    if (log4jBuffer !== null) {
+        log4jBuffer += '\n' + line;
+        return line.includes('</log4j:Event>') ? flushLog4jBuffer() : null;
+    }
+    return { text: line, type: null };
+}
+// ===== FIN PARSING LOG4J =====
+
 function addLog(text, forceType = null) {
     if (!text || !text.trim()) return;
     const type = forceType || detectType(text);
@@ -357,7 +593,13 @@ function addLog(text, forceType = null) {
 }
 
 ipcRenderer.on('log-data', (_, text) => {
-    if (typeof text === 'string') text.split('\n').forEach(l => addLog(l.trim()));
+    if (typeof text !== 'string') return;
+    text.split('\n').forEach(l => {
+        const trimmed = l.trim();
+        if (!trimmed) return;
+        const result = processIncomingLine(trimmed);
+        if (result) addLog(result.text, result.type);
+    });
 });
 
 ipcRenderer.on('log-status', (_, status) => {
@@ -376,6 +618,9 @@ ipcRenderer.on('log-status', (_, status) => {
         dot.className = 'status-dot stopped';
         statusText.textContent = 'Erreur';
         addLog('Une erreur est survenue.', 'error');
+    } else if (status === 'crashed') {
+        dot.className = 'status-dot crashed';
+        statusText.textContent = 'Crash';
     }
 });
 

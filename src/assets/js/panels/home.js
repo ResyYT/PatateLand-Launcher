@@ -6,6 +6,8 @@ import { config as configModule, database, logger, changePanel, appdata, setStat
 
 const { Launch } = require('minecraft-java-core')
 const { shell, ipcRenderer } = require('electron')
+const fs = require('fs')
+const path = require('path')
 
 // Descriptions affichées via l'icône "?" pour chaque instance.
 // Les clés doivent correspondre exactement au champ "name" de l'instance.
@@ -425,15 +427,11 @@ class Home {
 
     // ===== ENCART PARTENARIAT (ex: MineStrator) =====
     // Carte affichée sous la liste de news, dans .new-tab. Contrairement au
-    // bandeau d'avis, la fermeture n'est PAS définitive et n'est pas liée à
-    // un compte : elle masque juste l'encart pendant PARTNER_HIDE_DURATION,
-    // pour ne pas perdre la visibilité du partenariat pour un simple clic
-    // réflexe sur la croix. Le contenu (partner) est en dur ici : si tu gères
-    // plusieurs partenaires ou veux changer le texte sans repackager le
-    // launcher, tu peux remplacer ce bloc par un fetch vers ta config/API.
+    // bandeau d'avis, il est PERMANENT : pas de croix, pas de logique de
+    // masquage. Le contenu (partner) est en dur ici : si tu gères plusieurs
+    // partenaires ou veux changer le texte sans repackager le launcher, tu
+    // peux remplacer ce bloc par un fetch vers ta config/API.
     async partnerBanner() {
-        const PARTNER_HIDE_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 jours
-
         const partner = {
             name: 'MineStrator',
             // Logo MineStrator, déjà présent dans tes assets existants
@@ -445,14 +443,6 @@ class Home {
             discount: '-10%',
             url: 'https://minestrator.com/a/LACRIMO'
         };
-
-        let configClient = await this.db.readData('configClient');
-        const hiddenUntil = configClient?.launcher_config?.partner_banner_hidden_until;
-
-        if (hiddenUntil) {
-            const hiddenUntilDate = new Date(hiddenUntil);
-            if (!isNaN(hiddenUntilDate.getTime()) && hiddenUntilDate > new Date()) return;
-        }
 
         const newTab = document.querySelector('.new-tab');
         if (!newTab) return;
@@ -473,8 +463,7 @@ class Home {
                 </div>
             </div>
             <div class="partner-banner-actions">
-                <span class="partner-banner-btn">Découvrir ${partner.name}</span>
-                <span class="partner-banner-close">✕</span>
+                <span class="partner-banner-btn">Découvrir ${partner.name} →</span>
             </div>
         `;
 
@@ -482,14 +471,6 @@ class Home {
 
         card.querySelector('.partner-banner-btn').addEventListener('click', () => {
             shell.openExternal(partner.url);
-        });
-
-        card.querySelector('.partner-banner-close').addEventListener('click', async () => {
-            card.remove();
-            let cfg = await this.db.readData('configClient');
-            if (!cfg.launcher_config) cfg.launcher_config = {};
-            cfg.launcher_config.partner_banner_hidden_until = new Date(Date.now() + PARTNER_HIDE_DURATION).toISOString();
-            await this.db.updateData('configClient', cfg);
         });
     }
     // ===== FIN ENCART PARTENARIAT =====
@@ -762,6 +743,16 @@ class Home {
             return
         }
 
+        // Repères pour la détection de crash au 'close' (voir plus bas et
+        // handleCrash()) : l'heure de lancement sert à ignorer d'éventuels
+        // anciens rapports de crash déjà présents dans le dossier, et à ne
+        // considérer que ceux générés PENDANT cette session de jeu.
+        // Chaque instance a son propre dossier de jeu sous
+        // instances/<nomInstance>/ (confirmé par l'arborescence réelle du
+        // launcher), donc crash-reports/ s'y trouve aussi.
+        const launchedAt = Date.now();
+        const crashReportsDir = path.join(opt.path, 'instances', options.name, 'crash-reports');
+
         ipcRenderer.send('main-window-progress-load')
 
         launch.on('extract', extract => {
@@ -834,6 +825,13 @@ class Home {
             new logger(pkg.name, '#7289da');
             console.log(instanceName, 'Close');
             this.activeLaunches.delete(instanceName); notifyTrayRunning();
+
+            // Code de sortie 0 = fermeture normale. Tout le reste (crash,
+            // kill du processus, JVM plantée...) déclenche une recherche du
+            // rapport de crash le plus récent généré depuis le lancement.
+            if (code !== 0) {
+                this.handleCrash(instanceName, crashReportsDir, launchedAt);
+            }
         });
 
         launch.on('error', err => {
@@ -862,6 +860,53 @@ class Home {
             this.activeLaunches.delete(instanceName); notifyTrayRunning();
         });
     }
+
+    // ===== DÉTECTION & LECTURE DU RAPPORT DE CRASH =====
+    // Cherche le fichier crash-*.txt le plus récent créé depuis le lancement
+    // (avec 5s de marge pour l'écriture disque), puis l'envoie à la fenêtre
+    // de logs de cette instance via le canal 'log-send' existant, encadré de
+    // marqueurs que log.html sait reconnaître et afficher comme un bloc
+    // dédié (voir processIncomingLine/renderCrashReport dans log.html).
+    // On ne bascule le statut sur "crashed" que si un rapport a bien été
+    // trouvé, pour éviter de qualifier à tort de "crash" une fermeture
+    // inhabituelle mais volontaire (ex: kill du process, Alt+F4 sur certains
+    // OS) qui ne laisse aucun rapport derrière elle.
+    async handleCrash(instanceName, crashReportsDir, launchedAt) {
+        try {
+            if (!fs.existsSync(crashReportsDir)) {
+                ipcRenderer.send('log-send', instanceName,
+                    `⚠ Fermeture avec un code de sortie inhabituel, mais aucun dossier crash-reports trouvé (${crashReportsDir}).`);
+                return;
+            }
+
+            const files = fs.readdirSync(crashReportsDir)
+                .filter(f => f.toLowerCase().endsWith('.txt'))
+                .map(f => {
+                    const fullPath = path.join(crashReportsDir, f);
+                    return { fullPath, mtime: fs.statSync(fullPath).mtimeMs };
+                })
+                // Marge de 5s : l'écriture du fichier peut survenir juste
+                // avant le timestamp exact considéré comme "lancement".
+                .filter(f => f.mtime >= launchedAt - 5000)
+                .sort((a, b) => b.mtime - a.mtime);
+
+            if (!files.length) {
+                ipcRenderer.send('log-send', instanceName,
+                    `⚠ Fermeture avec un code de sortie inhabituel, mais aucun rapport de crash récent trouvé dans ${crashReportsDir}.`);
+                return;
+            }
+
+            const report = files[0];
+            const content = fs.readFileSync(report.fullPath, 'utf-8');
+
+            ipcRenderer.send('log-status', instanceName, 'crashed');
+            ipcRenderer.send('log-send', instanceName,
+                `===CRASH_REPORT===\nPATH:${report.fullPath}\n${content}\n===END_CRASH_REPORT===`);
+        } catch (err) {
+            console.error('Erreur lors de la lecture du rapport de crash :', err);
+        }
+    }
+    // ===== FIN DÉTECTION & LECTURE DU RAPPORT DE CRASH =====
 
     getdate(e) {
         let date = new Date(e)
