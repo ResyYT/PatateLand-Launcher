@@ -3,6 +3,7 @@
  * Luuxis License v1.0 (voir fichier LICENSE pour les détails en FR/EN)
  */
 import { config as configModule, database, logger, changePanel, appdata, setStatus, pkg, popup } from '../utils.js'
+import { injectServer } from '../utils/serversDat.js'
 
 const { Launch } = require('minecraft-java-core')
 const { shell, ipcRenderer } = require('electron')
@@ -787,7 +788,23 @@ class Home {
 
         let logWindowOpened = false;
         let readyNotified = false;
+        let serversInjected = false;
         launch.on('data', (e) => {
+            // Injecte le serveur PatateLand dans le servers.dat de cette
+            // instance UNE SEULE FOIS, ici plutôt qu'avant launch.Launch(opt) :
+            // le téléchargement/la vérification des fichiers de l'instance
+            // (qui peut inclure un servers.dat livré côté serveur, cf. config
+            // WinSCP) se fait entre l'appel à Launch() et ce premier event
+            // 'data'. Injecter avant Launch() serait donc écrasé par ce
+            // téléchargement. Le jeu ne lit servers.dat qu'à l'ouverture de
+            // l'écran multijoueur, donc l'injecter ici (dès que le process
+            // Minecraft a démarré) reste largement à temps.
+            if (!serversInjected) {
+                serversInjected = true;
+                const instancePath = path.join(opt.path, 'instances', options.name);
+                injectServer(instancePath, instanceName);
+            }
+
             const closeMode = configClient.launcher_config.closeLauncher;
             if (closeMode == 'close-launcher') {
                 ipcRenderer.send("main-window-minimize");
