@@ -1,3 +1,82 @@
+diff --git a/node_modules/minecraft-java-core/build/Minecraft-Loader/index.js b/node_modules/minecraft-java-core/build/Minecraft-Loader/index.js
+index d536de4..663aa6c 100644
+--- a/node_modules/minecraft-java-core/build/Minecraft-Loader/index.js
++++ b/node_modules/minecraft-java-core/build/Minecraft-Loader/index.js
+@@ -18,6 +18,29 @@ const neoForge_js_1 = __importDefault(require("./loader/neoForge/neoForge.js"));
+ const fabric_js_1 = __importDefault(require("./loader/fabric/fabric.js"));
+ const legacyFabric_js_1 = __importDefault(require("./loader/legacyfabric/legacyFabric.js"));
+ const quilt_js_1 = __importDefault(require("./loader/quilt/quilt.js"));
++/**
++ * PATCH: Workaround for a known Node.js/libuv bug on Windows where fs.cpSync's
++ * internal getStats() comparison can throw a spurious error carrying the Win32
++ * "ERROR_SUCCESS" (code 0) message (e.g. "L'opération a réussi." / "The operation
++ * completed successfully.") even though the file was actually copied correctly.
++ * This mostly happens with long/extended-length paths (\\?\...) or usernames
++ * containing accented/non-ASCII characters.
++ *
++ * We use fs.copyFileSync (a thinner wrapper around Win32 CopyFileW that doesn't
++ * do the buggy stat comparison) instead of fs.cpSync, and only re-throw if the
++ * destination file genuinely wasn't created.
++ */
++function safeCopyFile(source, destination) {
++    try {
++        fs_1.default.mkdirSync(path_1.default.dirname(destination), { recursive: true });
++        fs_1.default.copyFileSync(source, destination);
++    }
++    catch (err) {
++        if (!fs_1.default.existsSync(destination)) {
++            throw err;
++        }
++    }
++}
+ /**
+  * The main Loader class that orchestrates installation of different
+  * Minecraft mod loaders (Forge, Fabric, LegacyFabric, Quilt, etc.).
+@@ -115,7 +138,7 @@ class Loader extends events_1.EventEmitter {
+             if (!fs_1.default.existsSync(destination))
+                 fs_1.default.mkdirSync(destination, { recursive: true });
+             fs_1.default.writeFileSync(path_1.default.resolve(destination, `${profile.version.id}.json`), JSON.stringify(profile.version, null, 4));
+-            fs_1.default.cpSync(path_1.default.resolve(this.options.loader.config.minecraftJar), path_1.default.resolve(destination, `${profile.version.id}.jar`));
++            safeCopyFile(path_1.default.resolve(this.options.loader.config.minecraftJar), path_1.default.resolve(destination, `${profile.version.id}.jar`));
+         }
+         // 3. Extract universal jar if needed
+         const universal = await forge.extractUniversalJar(profile.install, installer.filePath);
+@@ -167,7 +190,7 @@ class Loader extends events_1.EventEmitter {
+             if (!fs_1.default.existsSync(destination))
+                 fs_1.default.mkdirSync(destination, { recursive: true });
+             fs_1.default.writeFileSync(path_1.default.resolve(destination, `${profile.version.id}.json`), JSON.stringify(profile.version, null, 4));
+-            fs_1.default.cpSync(path_1.default.resolve(this.options.loader.config.minecraftJar), path_1.default.resolve(destination, `${profile.version.id}.jar`));
++            safeCopyFile(path_1.default.resolve(this.options.loader.config.minecraftJar), path_1.default.resolve(destination, `${profile.version.id}.jar`));
+         }
+         // Extract universal jar
+         const universal = await neoForge.extractUniversalJar(profile.install, installer.filePath, installer.oldAPI);
+@@ -207,7 +230,7 @@ class Loader extends events_1.EventEmitter {
+             if (!fs_1.default.existsSync(destination))
+                 fs_1.default.mkdirSync(destination, { recursive: true });
+             fs_1.default.writeFileSync(path_1.default.resolve(destination, `${json.id}.json`), JSON.stringify(json, null, 4));
+-            fs_1.default.cpSync(path_1.default.resolve(this.options.loader.config.minecraftJar), path_1.default.resolve(destination, `${json.id}.jar`));
++            safeCopyFile(path_1.default.resolve(this.options.loader.config.minecraftJar), path_1.default.resolve(destination, `${json.id}.jar`));
+         }
+         if ("libraries" in json) {
+             await fabric.downloadLibraries(json);
+@@ -237,7 +260,7 @@ class Loader extends events_1.EventEmitter {
+             if (!fs_1.default.existsSync(destination))
+                 fs_1.default.mkdirSync(destination, { recursive: true });
+             fs_1.default.writeFileSync(path_1.default.resolve(destination, `${json.id}.json`), JSON.stringify(json, null, 4));
+-            fs_1.default.cpSync(path_1.default.resolve(this.options.loader.config.minecraftJar), path_1.default.resolve(destination, `${json.id}.jar`));
++            safeCopyFile(path_1.default.resolve(this.options.loader.config.minecraftJar), path_1.default.resolve(destination, `${json.id}.jar`));
+         }
+         if ("libraries" in json) {
+             await legacyFabric.downloadLibraries(json);
+@@ -267,7 +290,7 @@ class Loader extends events_1.EventEmitter {
+             if (!fs_1.default.existsSync(destination))
+                 fs_1.default.mkdirSync(destination, { recursive: true });
+             fs_1.default.writeFileSync(path_1.default.resolve(destination, `${json.id}.json`), JSON.stringify(json, null, 4));
+-            fs_1.default.cpSync(path_1.default.resolve(this.options.loader.config.minecraftJar), path_1.default.resolve(destination, `${json.id}.jar`));
++            safeCopyFile(path_1.default.resolve(this.options.loader.config.minecraftJar), path_1.default.resolve(destination, `${json.id}.jar`));
+         }
+         if ("libraries" in json) {
+             await quilt.downloadLibraries(json);
 diff --git a/node_modules/minecraft-java-core/build/Minecraft/Minecraft-Arguments.js b/node_modules/minecraft-java-core/build/Minecraft/Minecraft-Arguments.js
 index a3a6fb5..a3642d5 100644
 --- a/node_modules/minecraft-java-core/build/Minecraft/Minecraft-Arguments.js
