@@ -756,8 +756,13 @@ class Home {
                 },
 
                 memory: {
-                    min: `${configClient.java_config.java_memory.min * 1024}M`,
-                    max: `${configClient.java_config.java_memory.max * 1024}M`
+                    // Math.round (pas juste * 1024) : un -Xmx/-Xms à virgule
+                    // (ex: 16281.6M au lieu de 16282M) fait planter la JVM
+                    // avec "Could not create the Java Virtual Machine",
+                    // quelle que soit la source de la valeur en Go (slider
+                    // glissé à la main, ancien profil importé, etc.).
+                    min: `${Math.round(configClient.java_config.java_memory.min * 1024)}M`,
+                    max: `${Math.round(configClient.java_config.java_memory.max * 1024)}M`
                 }
             }
 

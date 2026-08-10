@@ -26,10 +26,17 @@ const MODPACK_MIN_MAX_GO = 4;
 const LOW_RAM_WARNING_GO = 6;
 
 function computeDefaultRam(totalMemGB) {
-    const round1 = (n) => Math.round(n * 10) / 10;
+    // Arrondi au 0.5 Go près (PAS au 0.1) : c'est le pas déjà utilisé par le
+    // slider (voir attribut step="0.5" dans settings.html), et surtout le
+    // seul qui garantit un nombre de Mo ENTIER une fois multiplié par 1024
+    // dans home.js (0.5 Go * 1024 = 512 Mo, toujours rond). Un arrondi au
+    // 0.1 Go (ex: 15.9 Go) donne 16281.6 Mo — un argument -Xmx à virgule que
+    // la JVM refuse purement et simplement ("Could not create the Java
+    // Virtual Machine"), sans lien avec l'architecture 32/64-bit.
+    const roundToHalfGo = (n) => Math.round(n * 2) / 2;
 
     const min = totalMemGB <= 4 ? 1 : 2;
-    let max = Math.max(round1(totalMemGB * 0.5), MODPACK_MIN_MAX_GO);
+    let max = Math.max(roundToHalfGo(totalMemGB * 0.5), MODPACK_MIN_MAX_GO);
 
     // Garde-fou : le max ne doit jamais descendre sous le min (petites
     // configs, ex: 2 Go de RAM totale -> 50% = 1 Go < min par défaut).
