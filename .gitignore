@@ -6,4 +6,4 @@ dist
 node-v*
 data
 .DS_Store
-src/assets/js/panels/webhook.config.js
+src/assets/js/panels/webhook.config.json

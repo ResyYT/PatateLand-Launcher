@@ -4,12 +4,42 @@
  */
 import { config as configModule, database, logger, changePanel, appdata, setStatus, pkg, popup } from '../utils.js'
 import { injectServer } from '../utils/serversDat.js'
-import { CRASH_REPORT_DISCORD_WEBHOOK } from './webhook.config.js'
+import { fileURLToPath } from 'url'
 
 const { Launch } = require('minecraft-java-core')
 const { shell, ipcRenderer } = require('electron')
 const fs = require('fs')
 const path = require('path')
+
+// ===== WEBHOOK DISCORD POUR LES CRASH REPORTS (lecture protégée) =====
+// Volontairement PAS un `import` statique vers un module JS : si ce fichier
+// n'existe pas (ex: gitignoré et absent du build), un import statique
+// planterait à la résolution du module, AVANT même que le code puisse
+// réagir — impossible à protéger avec un try/catch, et ça avait cassé tout
+// home.js (écran blanc au lancement). Une lecture de fichier à l'exécution,
+// elle, peut être protégée normalement : fichier absent -> chaîne vide,
+// tout le reste du launcher continue de fonctionner normalement.
+//
+// Crée un fichier "webhook.config.json" à côté de home.js (même dossier)
+// avec ce contenu pour activer l'envoi Discord :
+//   { "CRASH_REPORT_DISCORD_WEBHOOK": "https://discord.com/api/webhooks/..." }
+// Ce fichier JSON réel doit être gitignoré (voir .gitignore) ; seul
+// "webhook.config.example.json" (vide) doit être commité.
+function getCrashReportWebhook() {
+    try {
+        const configPath = fileURLToPath(new URL('./webhook.config.json', import.meta.url));
+        if (!fs.existsSync(configPath)) return '';
+        const raw = fs.readFileSync(configPath, 'utf-8');
+        const parsed = JSON.parse(raw);
+        return parsed?.CRASH_REPORT_DISCORD_WEBHOOK || '';
+    } catch (err) {
+        console.error('webhook.config.json illisible ou invalide (fonctionnalité optionnelle, désactivée) :', err);
+        return '';
+    }
+}
+
+const CRASH_REPORT_DISCORD_WEBHOOK = getCrashReportWebhook();
+// ===== FIN WEBHOOK DISCORD =====
 
 // Descriptions affichées via l'icône "?" pour chaque instance.
 // Les clés doivent correspondre exactement au champ "name" de l'instance.
@@ -984,6 +1014,12 @@ class Home {
     // besoin d'installer de lib supplémentaire (node-fetch, axios...).
     async sendCrashReportToDiscord(instanceName, playerName, reportPath, content) {
         if (!CRASH_REPORT_DISCORD_WEBHOOK) return;
+
+        // Option désactivée par défaut (voir settings > LAUNCHER > Rapports
+        // de crash) : sans consentement explicite de l'utilisateur, on ne
+        // tente même pas la requête réseau.
+        const cfg = await this.db.readData('configClient');
+        if (!cfg?.launcher_config?.send_crash_reports) return;
 
         try {
             const fileName = path.basename(reportPath);
