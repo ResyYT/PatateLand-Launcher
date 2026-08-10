@@ -4,7 +4,6 @@
  */
 import { config as configModule, database, logger, changePanel, appdata, setStatus, pkg, popup } from '../utils.js'
 import { injectServer } from '../utils/serversDat.js'
-import { fileURLToPath } from 'url'
 
 const { Launch } = require('minecraft-java-core')
 const { shell, ipcRenderer } = require('electron')
@@ -12,13 +11,14 @@ const fs = require('fs')
 const path = require('path')
 
 // ===== WEBHOOK DISCORD POUR LES CRASH REPORTS (lecture protégée) =====
-// Volontairement PAS un `import` statique vers un module JS : si ce fichier
-// n'existe pas (ex: gitignoré et absent du build), un import statique
-// planterait à la résolution du module, AVANT même que le code puisse
-// réagir — impossible à protéger avec un try/catch, et ça avait cassé tout
-// home.js (écran blanc au lancement). Une lecture de fichier à l'exécution,
-// elle, peut être protégée normalement : fichier absent -> chaîne vide,
-// tout le reste du launcher continue de fonctionner normalement.
+// Volontairement PAS un `import` statique vers un module JS ni
+// `import.meta.url` : les deux sont analysés/résolus AVANT l'exécution du
+// code (et `import.meta` peut même être une erreur de syntaxe pure selon le
+// bundler/transpileur utilisé) — dans les deux cas, impossible à protéger
+// avec un try/catch, ça fait planter tout le fichier au chargement (écran
+// blanc). __dirname + require() dynamique, eux, s'exécutent normalement au
+// moment de l'appel de la fonction, donc une erreur (fichier absent,
+// invalide...) est une Error JS ordinaire, capturable normalement.
 //
 // Crée un fichier "webhook.config.json" à côté de home.js (même dossier)
 // avec ce contenu pour activer l'envoi Discord :
@@ -27,7 +27,7 @@ const path = require('path')
 // "webhook.config.example.json" (vide) doit être commité.
 function getCrashReportWebhook() {
     try {
-        const configPath = fileURLToPath(new URL('./webhook.config.json', import.meta.url));
+        const configPath = path.join(__dirname, 'webhook.config.json');
         if (!fs.existsSync(configPath)) return '';
         const raw = fs.readFileSync(configPath, 'utf-8');
         const parsed = JSON.parse(raw);
