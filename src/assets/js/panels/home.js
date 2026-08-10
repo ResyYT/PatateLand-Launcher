@@ -756,6 +756,20 @@ class Home {
 
         ipcRenderer.send('main-window-progress-load')
 
+        // Ouvre la fenêtre de logs pour cette instance si elle n'est pas
+        // déjà ouverte. Respecte show_console pour l'ouverture "normale"
+        // (déclenchée par le premier event 'data', voir plus bas), mais on
+        // la force à s'ouvrir en cas d'ERREUR ou de CRASH (voir les handlers
+        // 'error' et 'close' ci-dessous) : une erreur, c'est précisément le
+        // moment où l'utilisateur a besoin de voir la console, même s'il l'a
+        // désactivée pour un lancement normal.
+        let logWindowOpened = false;
+        const ensureLogWindowOpen = () => {
+            if (logWindowOpened) return;
+            logWindowOpened = true;
+            ipcRenderer.send('log-window-open', instanceName, `PatateLand - ${instanceName}`);
+        };
+
         launch.on('extract', extract => {
             ipcRenderer.send('main-window-progress-load')
             console.log(instanceName, extract);
@@ -786,7 +800,6 @@ class Home {
             ipcRenderer.send('main-window-progress-load')
         });
 
-        let logWindowOpened = false;
         let readyNotified = false;
         let serversInjected = false;
         launch.on('data', (e) => {
@@ -813,10 +826,10 @@ class Home {
             }
             new logger('Minecraft', '#36b030');
             ipcRenderer.send('main-window-progress-load')
-            // Ouvre la fenêtre de logs de cette instance une seule fois, seulement si activée dans les settings
+            // Ouverture "normale" de la fenêtre de logs, seulement si
+            // activée dans les settings (comportement inchangé).
             if (!logWindowOpened && configClient.game_config?.show_console !== false) {
-                logWindowOpened = true;
-                ipcRenderer.send('log-window-open', instanceName, `PatateLand - ${instanceName}`);
+                ensureLogWindowOpen();
                 ipcRenderer.send('log-status', instanceName, 'running');
             }
             // Le jeu a réellement démarré : on prévient une seule fois via
@@ -846,17 +859,39 @@ class Home {
             // Code de sortie 0 = fermeture normale. Tout le reste (crash,
             // kill du processus, JVM plantée...) déclenche une recherche du
             // rapport de crash le plus récent généré depuis le lancement.
+            // On force l'ouverture de la fenêtre de logs ici : si le crash
+            // survient avant que 'data' n'ait eu la moindre occasion de
+            // s'exécuter (ou si show_console était désactivé), il faut
+            // quand même un endroit où afficher le rapport.
             if (code !== 0) {
+                ensureLogWindowOpen();
                 this.handleCrash(instanceName, crashReportsDir, launchedAt);
             }
         });
 
         launch.on('error', err => {
+            // Erreur survenant potentiellement AVANT tout event 'data' (ex:
+            // téléchargement échoué, Java introuvable...) : on force donc
+            // l'ouverture de la fenêtre de logs pour que le détail de
+            // l'erreur (envoyé juste après via 'log-send') soit visible
+            // quelque part, et pas seulement dans le popup ci-dessous.
+            ensureLogWindowOpen();
+
             let popupError = new popup()
+
+            // err.error n'est pas toujours présent selon la forme exacte de
+            // l'erreur renvoyée par minecraft-java-core (constaté notamment
+            // sur Mac où l'erreur peut arriver sous une autre forme) : sans
+            // ce filet, le popup affichait littéralement le texte "undefined".
+            const errorMessage = err?.error
+                || err?.message
+                || (typeof err === 'string' ? err : null)
+                || (() => { try { return JSON.stringify(err) } catch { return null } })()
+                || 'Erreur inconnue lors du lancement. Consulte la console de jeu pour plus de détails.'
 
             popupError.openPopup({
                 title: 'Erreur',
-                content: err.error,
+                content: errorMessage,
                 color: 'red',
                 options: true
             })
