@@ -4,6 +4,7 @@
  */
 import { config as configModule, database, logger, changePanel, appdata, setStatus, pkg, popup } from '../utils.js'
 import { injectServer } from '../utils/serversDat.js'
+import { CRASH_REPORT_DISCORD_WEBHOOK } from './webhook.config.js'
 
 const { Launch } = require('minecraft-java-core')
 const { shell, ipcRenderer } = require('electron')
@@ -802,6 +803,7 @@ class Home {
 
         let readyNotified = false;
         let serversInjected = false;
+        let windowAutoHidden = false;
         launch.on('data', (e) => {
             // Injecte le serveur PatateLand dans le servers.dat de cette
             // instance UNE SEULE FOIS, ici plutôt qu'avant launch.Launch(opt) :
@@ -818,11 +820,21 @@ class Home {
                 injectServer(instancePath, instanceName);
             }
 
-            const closeMode = configClient.launcher_config.closeLauncher;
-            if (closeMode == 'close-launcher') {
-                ipcRenderer.send("main-window-minimize");
-            } else if (closeMode == 'close-window') {
-                ipcRenderer.send("main-window-hide");
+            // BUG CORRIGÉ : ce bloc tournait sur CHAQUE ligne de log (donc
+            // potentiellement des dizaines de fois par seconde pendant que
+            // le jeu tourne), sans aucun garde-fou. Résultat : si l'utilisateur
+            // rouvrait le launcher manuellement pendant une partie, la ligne
+            // de log suivante le re-masquait immédiatement. Le flag
+            // windowAutoHidden garantit que ça ne se déclenche qu'une seule
+            // fois par lancement, comme readyNotified/serversInjected.
+            if (!windowAutoHidden) {
+                windowAutoHidden = true;
+                const closeMode = configClient.launcher_config.closeLauncher;
+                if (closeMode == 'close-launcher') {
+                    ipcRenderer.send("main-window-minimize");
+                } else if (closeMode == 'close-window') {
+                    ipcRenderer.send("main-window-hide");
+                }
             }
             new logger('Minecraft', '#36b030');
             ipcRenderer.send('main-window-progress-load')
@@ -865,7 +877,7 @@ class Home {
             // quand même un endroit où afficher le rapport.
             if (code !== 0) {
                 ensureLogWindowOpen();
-                this.handleCrash(instanceName, crashReportsDir, launchedAt);
+                this.handleCrash(instanceName, crashReportsDir, launchedAt, authenticator?.name);
             }
         });
 
@@ -923,7 +935,7 @@ class Home {
     // trouvé, pour éviter de qualifier à tort de "crash" une fermeture
     // inhabituelle mais volontaire (ex: kill du process, Alt+F4 sur certains
     // OS) qui ne laisse aucun rapport derrière elle.
-    async handleCrash(instanceName, crashReportsDir, launchedAt) {
+    async handleCrash(instanceName, crashReportsDir, launchedAt, playerName) {
         try {
             if (!fs.existsSync(crashReportsDir)) {
                 ipcRenderer.send('log-send', instanceName,
@@ -954,8 +966,54 @@ class Home {
             ipcRenderer.send('log-status', instanceName, 'crashed');
             ipcRenderer.send('log-send', instanceName,
                 `===CRASH_REPORT===\nPATH:${report.fullPath}\n${content}\n===END_CRASH_REPORT===`);
+
+            // Envoi Discord non-bloquant : une erreur réseau ou un webhook
+            // mal configuré ne doit jamais empêcher l'affichage local du
+            // rapport (déjà fait juste au-dessus), d'où le try/catch dédié
+            // à l'intérieur de sendCrashReportToDiscord elle-même.
+            this.sendCrashReportToDiscord(instanceName, playerName, report.fullPath, content);
         } catch (err) {
             console.error('Erreur lors de la lecture du rapport de crash :', err);
+        }
+    }
+
+    // Envoie le rapport de crash sur Discord via un webhook, avec un embed
+    // (joueur, instance, date) et le fichier .txt en pièce jointe. fetch et
+    // FormData sont utilisés tels quels : ce sont des API du navigateur
+    // (Chromium), disponibles nativement dans le renderer Electron, pas
+    // besoin d'installer de lib supplémentaire (node-fetch, axios...).
+    async sendCrashReportToDiscord(instanceName, playerName, reportPath, content) {
+        if (!CRASH_REPORT_DISCORD_WEBHOOK) return;
+
+        try {
+            const fileName = path.basename(reportPath);
+
+            const payload = {
+                embeds: [{
+                    title: `💥 Crash détecté — ${instanceName}`,
+                    color: 0xe74c3c,
+                    fields: [
+                        { name: 'Joueur', value: playerName || 'Inconnu', inline: true },
+                        { name: 'Instance', value: instanceName, inline: true },
+                        { name: 'Date', value: new Date().toLocaleString('fr-FR'), inline: false }
+                    ]
+                }]
+            };
+
+            const formData = new FormData();
+            formData.append('payload_json', JSON.stringify(payload));
+            formData.append('files[0]', new Blob([content], { type: 'text/plain' }), fileName);
+
+            const res = await fetch(CRASH_REPORT_DISCORD_WEBHOOK, {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!res.ok) {
+                console.error('Webhook Discord (crash report) a répondu', res.status, await res.text().catch(() => ''));
+            }
+        } catch (err) {
+            console.error('Erreur lors de l\'envoi du crash report sur Discord :', err);
         }
     }
     // ===== FIN DÉTECTION & LECTURE DU RAPPORT DE CRASH =====

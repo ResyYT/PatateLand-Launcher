@@ -1,3 +1,143 @@
+<style>
+    /* ===== ENCART RECOMMANDATION RAM ===== */
+    .ram-recommendation-box {
+        margin-top: 14px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        background: var(--background-element);
+        border: 1px solid var(--element-color);
+        border-radius: 12px;
+        padding: 12px 16px;
+        box-shadow: 0 4px 14px var(--shadow);
+    }
+
+    .ram-recommendation-icon {
+        font-size: 1.3rem;
+        flex-shrink: 0;
+    }
+
+    .ram-recommendation-text {
+        flex: 1;
+        font-size: 0.9rem;
+        font-weight: 500;
+    }
+
+    .ram-recommendation-text #recommended-ram {
+        font-weight: 700;
+        color: var(--element-color);
+    }
+
+    .ram-recommendation-btn {
+        background: linear-gradient(90deg, var(--element-color), var(--button-gradient-end));
+        color: #fff;
+        border: none;
+        font-weight: 700;
+        font-size: 0.85rem;
+        padding: 8px 16px;
+        border-radius: 8px;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: transform 0.15s, filter 0.15s;
+    }
+
+    .ram-recommendation-btn:hover {
+        transform: scale(1.05);
+        filter: brightness(1.05);
+    }
+
+    .ram-low-warning-box {
+        margin-top: 10px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        background: var(--delete-button-bg, rgba(231,76,60,0.1));
+        border: 1px solid var(--delete-button-color, #e74c3c);
+        border-radius: 12px;
+        padding: 12px 16px;
+    }
+
+    .ram-low-warning-box .ram-recommendation-icon {
+        color: var(--delete-button-color, #e74c3c);
+    }
+
+    .ram-low-warning-box .ram-recommendation-text {
+        font-size: 0.85rem;
+    }
+    /* ===== FIN ENCART RECOMMANDATION RAM ===== */
+
+    /* ===== APERÇU DU STOCKAGE ===== */
+    .storage-bar {
+        margin-top: 14px;
+        display: flex;
+        width: 100%;
+        height: 14px;
+        border-radius: 8px;
+        overflow: hidden;
+        background: rgba(255,255,255,0.06);
+    }
+
+    .storage-bar-segment {
+        height: 100%;
+        transition: width 0.3s ease;
+    }
+
+    .storage-legend {
+        margin-top: 14px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px 20px;
+    }
+
+    .storage-legend-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.85rem;
+    }
+
+    .storage-legend-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        flex-shrink: 0;
+    }
+
+    .storage-total {
+        margin-top: 14px;
+        font-weight: 700;
+        font-size: 0.95rem;
+    }
+
+    .storage-btn-box {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .storage-btn {
+        background: var(--background-element);
+        border: 1px solid var(--border-color);
+        color: var(--color);
+        font-weight: 600;
+        font-size: 0.85rem;
+        padding: 10px 16px;
+        border-radius: 10px;
+        cursor: pointer;
+        transition: transform 0.15s, border-color 0.15s;
+    }
+
+    .storage-btn:hover {
+        transform: scale(1.03);
+        border-color: var(--element-color);
+    }
+
+    .storage-btn-danger:hover {
+        border-color: var(--delete-button-color, #e74c3c);
+        color: var(--delete-button-color, #e74c3c);
+    }
+    /* ===== FIN APERÇU DU STOCKAGE ===== */
+</style>
 <div class="container">
     <div class="nav-settings">
         <p>Paramètres</p>
@@ -5,6 +145,7 @@
             <div id="account" class="nav-settings-btn active-settings-BTN">COMPTES</div>
             <div id="jeu" class="nav-settings-btn">JEU</div>
             <div id="launcher" class="nav-settings-btn">LAUNCHER</div>
+            <div id="stockage" class="nav-settings-btn">STOCKAGE</div>
             <div id="resourcepacks" class="nav-settings-btn">RESOURCE PACKS</div>
             <div id="shaderpacks" class="nav-settings-btn">SHADERS</div>
             <div id="save" class="nav-settings-btn">ACCUEIL</div>
@@ -24,6 +165,46 @@
     </div>
 
     <div id="jeu-tab" class="container-settings content-scroll">
+        <div class="titre-tab">Mémoire RAM</div>
+        <div class="settings-elements-box">
+            <div class="setting-text">
+                Définition de la RAM allouée à votre jeu. Une quantité plus importante augmentera les performances.<br>
+                Attention à ne pas allouer toute votre RAM (laissez-en pour le système).<br><br>
+                <b>- RAM Maximale:</b> Total alloué au jeu (recommandé: 50% de votre RAM totale).<br>
+                <b>- RAM Minimale:</b> Alloué au démarrage (recommandé: 2-4 Go max).
+            </div>
+            <div class="settings-elements content-evenly">
+                <div class="memory-slider" min="0.5" max="8" step="0.5">
+                    <div class="slider-touch-left">
+                        <span value="0 Go"></span>
+                    </div>
+                    <div class="slider-touch-right">
+                        <span value="0 Go"></span>
+                    </div>
+                    <div class="slider-line">
+                        <span></span>
+                    </div>
+                </div>
+                <div class="ram-info-block">
+                    <b>Total système : <span id="total-ram">0 Go</span> RAM.</b><br>
+                    <b>Disponible : <span id="free-ram">0 Go</span> RAM.</b>
+                </div>
+            </div>
+            <div class="ram-recommendation-box">
+                <div class="ram-recommendation-icon">💡</div>
+                <div class="ram-recommendation-text">
+                    Recommandé pour votre PC : <span id="recommended-ram">0 Go</span>
+                </div>
+                <button class="ram-recommendation-btn" id="apply-recommended-ram" type="button">Appliquer</button>
+            </div>
+            <div class="ram-low-warning-box" id="ram-low-warning" style="display:none;">
+                <div class="ram-recommendation-icon">⚠</div>
+                <div class="ram-recommendation-text">
+                    Ta RAM totale est un peu juste pour notre pack moddé, quelle que soit la valeur choisie ici. L'instance <b>Opti</b> est justement pensée pour les configurations modestes.
+                </div>
+            </div>
+        </div>
+
         <div class="titre-tab">Résolution du jeu</div>
         <div class="settings-elements-box">
             <div class="setting-text">
@@ -59,33 +240,6 @@
 
         </div>
 
-        <div class="titre-tab">Mémoire RAM</div>
-        <div class="settings-elements-box">
-            <div class="setting-text">
-                Définition de la RAM allouée à votre jeu. Une quantité plus importante augmentera les performances.<br>
-                Attention à ne pas allouer toute votre RAM (laissez-en pour le système).<br><br>
-                <b>- RAM Maximale:</b> Total alloué au jeu (recommandé: 50% de votre RAM totale).<br>
-                <b>- RAM Minimale:</b> Alloué au démarrage (recommandé: 2-4 Go max).
-            </div>
-            <div class="settings-elements content-evenly">
-                <div class="memory-slider" min="0.5" max="8" step="0.5">
-                    <div class="slider-touch-left">
-                        <span value="0 Go"></span>
-                    </div>
-                    <div class="slider-touch-right">
-                        <span value="0 Go"></span>
-                    </div>
-                    <div class="slider-line">
-                        <span></span>
-                    </div>
-                </div>
-                <div class="ram-info-block">
-                    <b>Total système : <span id="total-ram">0 Go</span> RAM.</b><br>
-                    <b>Disponible : <span id="free-ram">0 Go</span> RAM.</b>
-                </div>
-            </div>
-        </div>
-
         <div class="titre-tab">Emplacement de Java</div>
         <div class="settings-elements-box">
             <div class="setting-text">
@@ -116,6 +270,23 @@
                         <span class="toggle-slider"></span>
                     </div>
                     <span class="toggle-text">Lancer au démarrage</span>
+                </label>
+            </div>
+        </div>
+
+        <div class="titre-tab">Rapports de crash</div>
+        <div class="settings-elements-box">
+            <div class="setting-text">
+                En cas de crash du jeu, envoyer automatiquement le rapport de crash à l'équipe PatateLand (avec votre pseudo, l'instance et le fichier de crash) pour nous aider à corriger les bugs plus rapidement.<br>
+                <b>Désactivé par défaut.</b>
+            </div>
+            <div class="settings-elements content-center" style="margin-top: 10px;">
+                <label class="fullscreen-toggle-label">
+                    <div class="toggle-switch">
+                        <input type="checkbox" id="crash-report-toggle" class="toggle-input">
+                        <span class="toggle-slider"></span>
+                    </div>
+                    <span class="toggle-text">Envoyer automatiquement mes rapports de crash</span>
                 </label>
             </div>
         </div>
@@ -178,6 +349,42 @@
         </div>
 
 
+    </div>
+    <!-- ===== ONGLET STOCKAGE ===== -->
+    <div id="stockage-tab" class="container-settings content-scroll">
+        <div class="titre-tab">Aperçu du stockage</div>
+        <div class="settings-elements-box">
+            <div class="setting-text">
+                Répartition de l'espace disque utilisé par le launcher et le jeu.
+            </div>
+            <div class="storage-bar" id="storage-bar"></div>
+            <div class="storage-legend" id="storage-legend"></div>
+            <div class="storage-total" id="storage-total">Total : —</div>
+        </div>
+
+        <div class="titre-tab">Logs</div>
+        <div class="settings-elements-box">
+            <div class="setting-text">
+                Parcourez ou videz les logs de l'instance actuellement sélectionnée.
+            </div>
+            <div class="settings-elements content-evenly">
+                <div class="storage-btn-box">
+                    <div class="storage-open-logs-btn storage-btn" id="storage-open-logs">📂 Ouvrir les logs</div>
+                    <div class="storage-clear-logs-btn storage-btn storage-btn-danger" id="storage-clear-logs">🗑 Vider les logs</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="titre-tab">Cache Minecraft</div>
+        <div class="settings-elements-box">
+            <div class="setting-text">
+                Supprime les fichiers de jeu partagés (assets, bibliothèques, versions) téléchargés en cache.<br>
+                <b>Le prochain lancement sera plus long</b>, ces fichiers seront ré-téléchargés automatiquement.
+            </div>
+            <div class="settings-elements content-evenly">
+                <div class="storage-clear-cache-btn storage-btn storage-btn-danger" id="storage-clear-cache">🗑 Vider le cache</div>
+            </div>
+        </div>
     </div>
     <!-- ===== ONGLET RESOURCE PACKS ===== -->
     <div id="resourcepacks-tab" class="container-settings content-scroll">
