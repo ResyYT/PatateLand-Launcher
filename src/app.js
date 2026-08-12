@@ -307,11 +307,30 @@ ipcMain.on('main-window-show', () => {
 ipcMain.handle('get-auto-launch', () => {
     const settings = app.getLoginItemSettings();
     console.log('[AutoLaunch] get-auto-launch invoqué, résultat complet :', JSON.stringify(settings));
-    return settings.openAtLogin;
+
+    // Sur Windows 10/11, openAtLogin peut renvoyer false même quand
+    // l'enregistrement a réellement réussi (executableWillLaunchAtLogin à
+    // true, launchItems contenant bien l'entrée) — comportement connu de
+    // l'API Electron, pas forcément un signe d'échec. On privilégie donc
+    // executableWillLaunchAtLogin quand elle est disponible (Windows), avec
+    // openAtLogin comme repli sur les autres OS où cette clé n'existe pas.
+    return settings.executableWillLaunchAtLogin ?? settings.openAtLogin;
 });
 
 ipcMain.on('set-auto-launch', (_, enabled) => {
     setAutoLaunch(enabled);
+});
+
+// Infos GPU pour les rapports de crash (voir sendCrashReportToDiscord dans
+// home.js) : app.getGPUInfo() n'existe que côté process principal, d'où ce
+// handler IPC — le renderer ne peut pas l'appeler directement.
+ipcMain.handle('get-gpu-info', async () => {
+    try {
+        return await app.getGPUInfo('basic');
+    } catch (err) {
+        console.error('[GPU] Erreur lors de la récupération des infos GPU :', err);
+        return null;
+    }
 });
 
 ipcMain.handle('Microsoft-window', async (_, client_id) => {

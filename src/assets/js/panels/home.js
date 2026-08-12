@@ -9,6 +9,7 @@ const { Launch } = require('minecraft-java-core')
 const { shell, ipcRenderer } = require('electron')
 const fs = require('fs')
 const path = require('path')
+const os = require('os')
 
 // ===== WEBHOOK DISCORD POUR LES CRASH REPORTS (lecture protégée) =====
 // Volontairement PAS un `import` statique vers un module JS ni
@@ -913,7 +914,7 @@ class Home {
             // trouve un VRAI fichier de crash-report (voir plus bas).
             if (code !== 0) {
                 console.log(instanceName, '[DIAGNOSTIC] code !== 0, entrée dans la détection crash. code =', code);
-                this.handleCrash(instanceName, crashReportsDir, launchedAt, authenticator?.name, ensureLogWindowOpen);
+                this.handleCrash(instanceName, crashReportsDir, launchedAt, authenticator?.name, authenticator?.uuid, ensureLogWindowOpen);
             } else {
                 console.log(instanceName, '[DIAGNOSTIC] code === 0, fermeture normale, pas de vérification crash.');
             }
@@ -974,7 +975,7 @@ class Home {
     // simple base d'un code de sortie non-nul (certains packs/loaders en
     // renvoient parfois un même sur une fermeture normale, ce qui ouvrait
     // la console à tort à chaque fermeture pour certains utilisateurs).
-    async handleCrash(instanceName, crashReportsDir, launchedAt, playerName, ensureLogWindowOpen) {
+    async handleCrash(instanceName, crashReportsDir, launchedAt, playerName, playerUuid, ensureLogWindowOpen) {
         console.log(instanceName, '[DIAGNOSTIC] handleCrash appelé. crashReportsDir:', crashReportsDir);
         try {
             if (!fs.existsSync(crashReportsDir)) {
@@ -1029,7 +1030,7 @@ class Home {
             // mal configuré ne doit jamais empêcher l'affichage local du
             // rapport (déjà fait juste au-dessus), d'où le try/catch dédié
             // à l'intérieur de sendCrashReportToDiscord elle-même.
-            this.sendCrashReportToDiscord(instanceName, playerName, report.fullPath, content);
+            this.sendCrashReportToDiscord(instanceName, playerName, playerUuid, report.fullPath, content);
         } catch (err) {
             console.error('Erreur lors de la lecture du rapport de crash :', err);
         }
@@ -1040,7 +1041,7 @@ class Home {
     // FormData sont utilisés tels quels : ce sont des API du navigateur
     // (Chromium), disponibles nativement dans le renderer Electron, pas
     // besoin d'installer de lib supplémentaire (node-fetch, axios...).
-    async sendCrashReportToDiscord(instanceName, playerName, reportPath, content) {
+    async sendCrashReportToDiscord(instanceName, playerName, playerUuid, reportPath, content) {
         if (!CRASH_REPORT_DISCORD_WEBHOOK) return;
 
         // Option désactivée par défaut (voir settings > LAUNCHER > Rapports
@@ -1052,13 +1053,55 @@ class Home {
         try {
             const fileName = path.basename(reportPath);
 
+            // Tête du skin via Crafatar (même service déjà utilisé dans
+            // utils.js pour les avatars de comptes) : on lui passe juste
+            // l'UUID, Discord va chercher l'image lui-même via cette URL
+            // publique — pas besoin de télécharger/uploader quoi que ce
+            // soit nous-mêmes. Fallback sur le skin Steve si pas d'UUID
+            // (ex: compte hors-ligne/Microsoft sans profil AZauth).
+            // mc-heads.net plutôt que Crafatar (tombé en panne pendant nos
+            // tests — erreur 521 côté serveur Crafatar lui-même, rien à
+            // voir avec notre code). Format différent : taille dans le
+            // chemin, pas en paramètre de requête. Fallback sur le skin
+            // Steve classique ("MHF_Steve") si pas d'UUID.
+            const cleanUuid = playerUuid ? playerUuid.replace(/-/g, '') : 'MHF_Steve';
+            const skinHeadUrl = `https://mc-heads.net/avatar/${cleanUuid}/128`;
+
+            // ===== INFOS SYSTÈME =====
+            // OS/CPU/RAM viennent du module Node "os" (déjà utilisé ailleurs
+            // dans le launcher pour la RAM, ex: settings.js). Le GPU, lui,
+            // passe par un appel IPC (get-gpu-info dans app.js) car
+            // app.getGPUInfo() n'existe que côté process principal.
+            const osNameMap = { win32: 'Windows', darwin: 'macOS', linux: 'Linux' };
+            const osLine = `${osNameMap[process.platform] || process.platform} ${os.release()} (${os.arch()})`;
+
+            const cpus = os.cpus();
+            const cpuLine = cpus.length ? `${cpus[0].model} (${cpus.length} coeurs)` : 'Inconnu';
+
+            const totalMemGb = Math.round(os.totalmem() / 1073741824 * 10) / 10;
+
+            let gpuLine = 'Inconnu';
+            try {
+                const gpuInfo = await ipcRenderer.invoke('get-gpu-info');
+                const device = gpuInfo?.gpuDevice?.[0];
+                if (device) gpuLine = device.deviceString || device.vendorString || 'Inconnu';
+            } catch (err) {
+                console.error('Erreur lors de la récupération des infos GPU pour le crash report :', err);
+            }
+            // ===== FIN INFOS SYSTÈME =====
+
             const payload = {
                 embeds: [{
                     title: `💥 Crash détecté — ${instanceName}`,
                     color: 0xe74c3c,
+                    thumbnail: { url: skinHeadUrl },
                     fields: [
                         { name: 'Joueur', value: playerName || 'Inconnu', inline: true },
                         { name: 'Instance', value: instanceName, inline: true },
+                        { name: 'OS', value: osLine, inline: true },
+                        { name: 'CPU', value: cpuLine, inline: true },
+                        { name: 'RAM totale', value: `${totalMemGb} Go`, inline: true },
+                        { name: 'GPU', value: gpuLine, inline: true },
                         { name: 'Date', value: new Date().toLocaleString('fr-FR'), inline: false }
                     ]
                 }]
