@@ -517,9 +517,24 @@ class Settings {
             autoLaunchToggle.closest('.settings-elements-box')?.previousElementSibling?.remove();
             autoLaunchToggle.closest('.settings-elements-box')?.remove();
         } else {
+            // On se base sur l'état RÉEL de Windows/macOS (get-auto-launch,
+            // qui lit app.getLoginItemSettings() côté main process), pas sur
+            // la valeur cachée dans configClient. Ancien bug : si
+            // l'enregistrement OS avait échoué silencieusement une fois (ou
+            // n'avait jamais réussi), le toggle affichait "activé" pour
+            // toujours en se basant sur configClient, même quand Windows
+            // n'avait strictement rien enregistré.
             let cfgForAutoLaunch = await this.db.readData('configClient');
-            let currentAutoLaunch = cfgForAutoLaunch?.launcher_config?.auto_launch ?? await ipcRenderer.invoke('get-auto-launch');
-            autoLaunchToggle.checked = currentAutoLaunch;
+            let realAutoLaunch = await ipcRenderer.invoke('get-auto-launch');
+            autoLaunchToggle.checked = realAutoLaunch;
+
+            // Resynchronise configClient sur la réalité si jamais les deux
+            // avaient divergé (cas exact rencontré ici).
+            if (cfgForAutoLaunch.launcher_config.auto_launch !== realAutoLaunch) {
+                cfgForAutoLaunch.launcher_config.auto_launch = realAutoLaunch;
+                await this.db.updateData('configClient', cfgForAutoLaunch);
+            }
+
             autoLaunchToggle.addEventListener('change', async () => {
                 ipcRenderer.send('set-auto-launch', autoLaunchToggle.checked);
                 let cfg = await this.db.readData('configClient');

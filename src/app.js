@@ -33,24 +33,45 @@ Store.initRenderer();
 app.setName('PatateLand');
 app.setAppUserModelId('fr.patateland.launcher');
 
+// ===== AUTO LAUNCH (démarrage avec Windows/macOS) =====
+// Ajout de logs + try/catch : avant, une erreur de setLoginItemSettings
+// (chemin d'exe invalide, permissions, etc.) échouait silencieusement, sans
+// aucune trace nulle part. Si l'auto-launch continue à ne pas fonctionner
+// après le fix côté settings.js (qui affiche maintenant l'état RÉEL de
+// Windows au lieu de la config cachée), ces logs dans la console DevTools
+// (ou le fichier de logs si --enable-logging est utilisé) diront pourquoi.
 function setAutoLaunch(enabled) {
-    if (process.platform === 'darwin') {
+    try {
+        if (process.platform === 'darwin') {
 
-        const exePath = app.getPath('exe');
-        const appPath = exePath.includes('.app/') 
-            ? exePath.split('.app/')[0] + '.app'
-            : exePath;
-        app.setLoginItemSettings({
-            openAtLogin: enabled,
-            name: 'PatateLand',
-            path: appPath
-        });
-    } else {
-        app.setLoginItemSettings({
-            openAtLogin: enabled,
-            name: 'PatateLand',
-            path: process.execPath
-        });
+            const exePath = app.getPath('exe');
+            const appPath = exePath.includes('.app/') 
+                ? exePath.split('.app/')[0] + '.app'
+                : exePath;
+            app.setLoginItemSettings({
+                openAtLogin: enabled,
+                name: 'PatateLand',
+                path: appPath
+            });
+            console.log('[AutoLaunch] setLoginItemSettings (darwin) appelé, enabled =', enabled, 'path =', appPath);
+        } else {
+            console.log('[AutoLaunch] setLoginItemSettings (win/linux) appelé, enabled =', enabled, 'execPath =', process.execPath);
+            app.setLoginItemSettings({
+                openAtLogin: enabled,
+                name: 'PatateLand',
+                path: process.execPath
+            });
+        }
+
+        // Relit immédiatement ce que Windows/macOS a réellement enregistré,
+        // pour confirmer que l'appel a bien été pris en compte plutôt que
+        // de supposer que ça a marché juste parce qu'aucune exception n'a
+        // été levée (setLoginItemSettings peut échouer silencieusement dans
+        // certains cas selon l'OS/la config).
+        const verif = app.getLoginItemSettings();
+        console.log('[AutoLaunch] Relecture après appel :', JSON.stringify(verif));
+    } catch (err) {
+        console.error('[AutoLaunch] Erreur lors de setLoginItemSettings :', err);
     }
 }
 
@@ -59,10 +80,13 @@ async function restoreAutoLaunch() {
         const Store = require('electron-store');
         const store = new Store({ name: 'configClient' });
         const configClient = store.get('data');
+        console.log('[AutoLaunch] restoreAutoLaunch() - configClient.launcher_config.auto_launch =', configClient?.launcher_config?.auto_launch);
         if (configClient?.launcher_config?.auto_launch === true) {
             setAutoLaunch(true);
         }
-    } catch(e) {}
+    } catch(e) {
+        console.error('[AutoLaunch] Erreur dans restoreAutoLaunch :', e);
+    }
 }
 
 function sendNotification({ title, body, silent = false, onClick = null }) {
@@ -281,7 +305,9 @@ ipcMain.on('main-window-show', () => {
 })
 
 ipcMain.handle('get-auto-launch', () => {
-    return app.getLoginItemSettings().openAtLogin;
+    const settings = app.getLoginItemSettings();
+    console.log('[AutoLaunch] get-auto-launch invoqué, résultat complet :', JSON.stringify(settings));
+    return settings.openAtLogin;
 });
 
 ipcMain.on('set-auto-launch', (_, enabled) => {

@@ -795,10 +795,9 @@ class Home {
         // Ouvre la fenêtre de logs pour cette instance si elle n'est pas
         // déjà ouverte. Respecte show_console pour l'ouverture "normale"
         // (déclenchée par le premier event 'data', voir plus bas), mais on
-        // la force à s'ouvrir en cas d'ERREUR ou de CRASH (voir les handlers
-        // 'error' et 'close' ci-dessous) : une erreur, c'est précisément le
-        // moment où l'utilisateur a besoin de voir la console, même s'il l'a
-        // désactivée pour un lancement normal.
+        // la force à s'ouvrir en cas d'ERREUR (voir 'error' ci-dessous) ou
+        // de VRAI crash confirmé (voir handleCrash — pas juste un code de
+        // sortie non-nul, voir NOTE plus bas dans 'close').
         let logWindowOpened = false;
         const ensureLogWindowOpen = () => {
             if (logWindowOpened) return;
@@ -900,19 +899,23 @@ class Home {
             ipcRenderer.send('main-window-progress-reset')
             ipcRenderer.send('log-status', instanceName, 'closed');
             new logger(pkg.name, '#7289da');
-            console.log(instanceName, 'Close');
+            console.log(instanceName, 'Close - exit code:', code, '(type:', typeof code, ')');
             this.activeLaunches.delete(instanceName); notifyTrayRunning();
 
             // Code de sortie 0 = fermeture normale. Tout le reste (crash,
             // kill du processus, JVM plantée...) déclenche une recherche du
             // rapport de crash le plus récent généré depuis le lancement.
-            // On force l'ouverture de la fenêtre de logs ici : si le crash
-            // survient avant que 'data' n'ait eu la moindre occasion de
-            // s'exécuter (ou si show_console était désactivé), il faut
-            // quand même un endroit où afficher le rapport.
+            // NOTE : certains packs/loaders renvoient parfois un code non-nul
+            // même sur une fermeture parfaitement normale (comportement
+            // propre à Forge/JVM selon la config) — on ne force donc PAS
+            // l'ouverture de la console ici sur la simple base du code de
+            // sortie. C'est handleCrash() qui décide, et seulement s'il
+            // trouve un VRAI fichier de crash-report (voir plus bas).
             if (code !== 0) {
-                ensureLogWindowOpen();
-                this.handleCrash(instanceName, crashReportsDir, launchedAt, authenticator?.name);
+                console.log(instanceName, '[DIAGNOSTIC] code !== 0, entrée dans la détection crash. code =', code);
+                this.handleCrash(instanceName, crashReportsDir, launchedAt, authenticator?.name, ensureLogWindowOpen);
+            } else {
+                console.log(instanceName, '[DIAGNOSTIC] code === 0, fermeture normale, pas de vérification crash.');
             }
         });
 
@@ -966,19 +969,28 @@ class Home {
     // de logs de cette instance via le canal 'log-send' existant, encadré de
     // marqueurs que log.html sait reconnaître et afficher comme un bloc
     // dédié (voir processIncomingLine/renderCrashReport dans log.html).
-    // On ne bascule le statut sur "crashed" que si un rapport a bien été
-    // trouvé, pour éviter de qualifier à tort de "crash" une fermeture
-    // inhabituelle mais volontaire (ex: kill du process, Alt+F4 sur certains
-    // OS) qui ne laisse aucun rapport derrière elle.
-    async handleCrash(instanceName, crashReportsDir, launchedAt, playerName) {
+    // On ne bascule le statut sur "crashed" ET on n'ouvre la console
+    // (ensureLogWindowOpen) QUE si un rapport a bien été trouvé — pas sur la
+    // simple base d'un code de sortie non-nul (certains packs/loaders en
+    // renvoient parfois un même sur une fermeture normale, ce qui ouvrait
+    // la console à tort à chaque fermeture pour certains utilisateurs).
+    async handleCrash(instanceName, crashReportsDir, launchedAt, playerName, ensureLogWindowOpen) {
+        console.log(instanceName, '[DIAGNOSTIC] handleCrash appelé. crashReportsDir:', crashReportsDir);
         try {
             if (!fs.existsSync(crashReportsDir)) {
-                ipcRenderer.send('log-send', instanceName,
-                    `⚠ Fermeture avec un code de sortie inhabituel, mais aucun dossier crash-reports trouvé (${crashReportsDir}).`);
+                console.log(instanceName, '[DIAGNOSTIC] Dossier crash-reports introuvable -> pas de crash, aucune action.');
+                // Pas de dossier crash-reports du tout : très probablement
+                // une fermeture normale avec juste un code de sortie
+                // inhabituel, pas un vrai crash. On ne force rien, on ne
+                // log même pas (silence complet pour ne pas polluer une
+                // console qui n'existe peut-être pas).
                 return;
             }
 
-            const files = fs.readdirSync(crashReportsDir)
+            const allFiles = fs.readdirSync(crashReportsDir);
+            console.log(instanceName, '[DIAGNOSTIC] Fichiers dans crash-reports:', allFiles);
+
+            const files = allFiles
                 .filter(f => f.toLowerCase().endsWith('.txt'))
                 .map(f => {
                     const fullPath = path.join(crashReportsDir, f);
@@ -989,11 +1001,22 @@ class Home {
                 .filter(f => f.mtime >= launchedAt - 5000)
                 .sort((a, b) => b.mtime - a.mtime);
 
+            console.log(instanceName, '[DIAGNOSTIC] launchedAt:', launchedAt, new Date(launchedAt).toLocaleTimeString(),
+                '- Fichiers récents trouvés (après filtre 5s):', files.length, files.map(f => f.fullPath));
+
             if (!files.length) {
-                ipcRenderer.send('log-send', instanceName,
-                    `⚠ Fermeture avec un code de sortie inhabituel, mais aucun rapport de crash récent trouvé dans ${crashReportsDir}.`);
+                console.log(instanceName, '[DIAGNOSTIC] Aucun fichier récent -> pas de crash, aucune action.');
+                // Toujours aucune preuve concrète de crash -> pareil, on ne
+                // force pas l'ouverture de la console pour un simple code
+                // de sortie inhabituel sans rapport derrière.
                 return;
             }
+
+            console.log(instanceName, '[DIAGNOSTIC] Fichier de crash trouvé -> ouverture de la console.');
+
+            // À partir d'ici : un VRAI rapport de crash a été trouvé, donc
+            // c'est un vrai crash. On peut ouvrir la console en confiance.
+            ensureLogWindowOpen();
 
             const report = files[0];
             const content = fs.readFileSync(report.fullPath, 'utf-8');
